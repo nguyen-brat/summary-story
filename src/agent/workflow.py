@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 from llama_index.llms.google_genai import GoogleGenAI
 import asyncio
 import time
+import json
+import re
 from llama_index.utils.workflow import draw_most_recent_execution
 from numpy import block
 
@@ -19,6 +21,9 @@ from typing import Any, List
 from llama_index.core.bridge.pydantic import BaseModel, Field
 from llama_index.core.prompts import PromptTemplate
 
+import sys
+sys.path.append("..")
+from trackapi import TrackApi
 load_dotenv()
 
 FIRST_EXTRACTCHARACTERNSUMMARY_PROMPT_TMPL = """Mỗi dòng liệt kê một nhân vật gồm tên nhân vật, giới thiệu về nhân vật được cung cấp dưới đây. \
@@ -89,17 +94,20 @@ class ChapterSummary(BaseModel):
 class SummarizeEvent(Event):
     summary: ChapterSummary = Field(description="Tóm tắt các chương truyện trước và danh sách các nhân vật")
 
-class BookSummary(Workflow):
+class BookSummary(Workflow, TrackApi):
     def __init__(
         self,
         story_paths,
-        gather_chapters = 1,
+        gather_chapters=1,
         max_chapters: int = 1000,
         big_summary_interval: int = 100,
-        system_prompt = None,
+        quota_per_minute: int = 15,
+        system_prompt=None,
         **kwargs
     ):
-        super().__init__(**kwargs)
+        Workflow.__init__(self, **kwargs)
+        TrackApi.__init__(self, quota_per_minute)
+
         if system_prompt is None:
             system_prompt = """
             Bạn là một trợ lí nhiệm vụ của bạn là tóm tắt lại một câu chuyện.\
@@ -111,84 +119,6 @@ class BookSummary(Workflow):
         self.gather_chapters = gather_chapters
         self.llm = GoogleGenAI(model="models/gemini-2.0-flash", system_prompt=system_prompt)
         self.chapter_generator = self.get_chapter(gather_chapters)
-        # Rate limiting tracking
-        self.request_timestamps = []
-        self.daily_request_count = 0
-        self.daily_reset_time = time.time() + 24 * 3600  # Reset daily counter every 24 hours
-        
-    async def _rate_limited_llm_call(self, llm_method, *args, **kwargs):
-        """
-        Wrapper for LLM calls with rate limiting for Google Gemini free tier:
-        - 10 requests per minute
-        - 1500 requests per day
-        """
-        max_retries = 5
-        base_delay = 6  # 6 seconds = 60/10 for rate limiting
-        
-        for attempt in range(max_retries):
-            try:
-                # Check and wait for rate limits
-                await self._check_rate_limits()
-                
-                # Make the LLM call
-                if asyncio.iscoroutinefunction(llm_method):
-                    result = await llm_method(*args, **kwargs)
-                else:
-                    result = llm_method(*args, **kwargs)
-                
-                # Track successful request
-                self._track_request()
-                return result
-                
-            except Exception as e:
-                error_msg = str(e).lower()
-                
-                # Check if it's a rate limit error
-                if any(term in error_msg for term in ['quota', 'rate limit', 'too many requests', '429']):
-                    wait_time = base_delay * (2 ** attempt)  # Exponential backoff
-                    print(f"Rate limit exceeded. Waiting {wait_time} seconds before retry {attempt + 1}/{max_retries}")
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    # For other errors, re-raise immediately
-                    raise e
-        
-        # If all retries failed
-        raise Exception(f"Failed to complete LLM call after {max_retries} attempts")
-    
-    async def _check_rate_limits(self):
-        """Check and enforce rate limits"""
-        current_time = time.time()
-        
-        # Reset daily counter if needed
-        if current_time > self.daily_reset_time:
-            self.daily_request_count = 0
-            self.daily_reset_time = current_time + 24 * 3600
-        
-        # Check daily limit
-        if self.daily_request_count >= 1500:
-            sleep_time = self.daily_reset_time - current_time
-            print(f"Daily request limit (1500) reached. Sleeping for {sleep_time/3600:.2f} hours")
-            await asyncio.sleep(sleep_time)
-            self.daily_request_count = 0
-            self.daily_reset_time = time.time() + 24 * 3600
-        
-        # Clean old timestamps (older than 1 minute)
-        self.request_timestamps = [ts for ts in self.request_timestamps if current_time - ts < 60]
-        
-        # Check per-minute limit
-        if len(self.request_timestamps) >= 10:
-            oldest_request = min(self.request_timestamps)
-            sleep_time = 60 - (current_time - oldest_request)
-            if sleep_time > 0:
-                print(f"Per-minute limit (10) reached. Sleeping for {sleep_time:.2f} seconds")
-                await asyncio.sleep(sleep_time)
-    
-    def _track_request(self):
-        """Track a successful request"""
-        current_time = time.time()
-        self.request_timestamps.append(current_time)
-        self.daily_request_count += 1
         
     def get_chapter(self, gather = 1):
         gather_chapters = []
@@ -281,19 +211,35 @@ class BookSummary(Workflow):
 if __name__ == "__main__":
     import os
     import asyncio
+    
+    max_chapters = 100
+    gather_chapters = 1
+    big_summary_interval = 50
+    quota_per_minute = 15  # Adjust based on your API tier
+    summary_time_per_chapter = 20
+    name = "Cẩu Tại Sơ Thánh Ma Môn Làm Nhân Tài"
 
     story_paths = [
-        os.path.join("story", "Cẩu Tại Sơ Thánh Ma Môn Làm Nhân Tài", f)
-        for f in os.listdir(os.path.join("story", "Cẩu Tại Sơ Thánh Ma Môn Làm Nhân Tài"))
+        os.path.join("story", name, f)
+        for f in os.listdir(os.path.join("story", name))
         if f.endswith(".txt")
     ]
     story_paths.sort()
-    w = BookSummary(story_paths, big_summary_interval=50, max_chapters=100, gather_chapters=1)
+    w = BookSummary(
+        story_paths, 
+        big_summary_interval=big_summary_interval, 
+        max_chapters=max_chapters, 
+        gather_chapters=gather_chapters,
+        quota_per_minute=quota_per_minute  # Adjust based on your API tier
+    )
 
     async def main():
-        result = await w.run()
+        result = await w.run(timeout=max_chapters//gather_chapters*summary_time_per_chapter)
         print("*"*10 + "final summary" + "*"*10)
         print(result)
+        return result
         # draw_most_recent_execution()
 
-    asyncio.run(main())
+    result = asyncio.run(main())
+    with open(os.path.join("summary", name + "_summary.txt"), "w", encoding="utf-8") as f:
+        f.write(result)
