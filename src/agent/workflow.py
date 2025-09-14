@@ -9,19 +9,14 @@ from llama_index.core.workflow import (
 from dotenv import load_dotenv
 from llama_index.llms.google_genai import GoogleGenAI
 import asyncio
-import time
-import json
-import re
 from llama_index.utils.workflow import draw_most_recent_execution
-from numpy import block
-
 from llama_index.core.llms import ChatMessage
-from llama_index.core.tools import ToolSelection, ToolOutput
 from typing import Any, List
 from llama_index.core.bridge.pydantic import BaseModel, Field
 from llama_index.core.prompts import PromptTemplate
 
 import sys
+import os
 sys.path.append("..")
 from trackapi import TrackApi
 from prompt import (
@@ -30,7 +25,6 @@ from prompt import (
     LONG_SUMMARY_PROMPT_TMPL,
 )
 load_dotenv()
-
 
 class ChapterSummary(BaseModel):
     character: str = Field(description="Danh sách các nhân vật được đề cập. Mỗi dòng liệt kê một nhân vật (Tên_nhân_vât: giới thiệu về nhân vật)")
@@ -47,6 +41,9 @@ class BookSummary(Workflow, TrackApi):
         max_chapters: int = 1000,
         big_summary_interval: int = 100,
         quota_per_minute: int = 15,
+        initial_short_summaries: List[str] = None,
+        initial_long_summaries: List[str] = None,
+        initial_characters: str = "",
         system_prompt=None,
         **kwargs
     ):
@@ -64,6 +61,11 @@ class BookSummary(Workflow, TrackApi):
         self.gather_chapters = gather_chapters
         self.llm = GoogleGenAI(model="models/gemini-2.0-flash", system_prompt=system_prompt)
         self.chapter_generator = self.get_chapter(gather_chapters)
+        
+        # Store initial data
+        self.initial_short_summaries = initial_short_summaries or []
+        self.initial_long_summaries = initial_long_summaries or []
+        self.initial_characters = initial_characters
         
     def get_chapter(self, gather = 1):
         gather_chapters = []
@@ -93,6 +95,21 @@ class BookSummary(Workflow, TrackApi):
         ctx: Context,
         ev: StartEvent | SummarizeEvent,
     ) -> SummarizeEvent | StopEvent:
+        # Initialize context store with initial data on first run
+        if isinstance(ev, StartEvent):
+            # Convert string summaries to ChapterSummary objects
+            initial_chapter_summaries = []
+            for summary_text in self.initial_short_summaries:
+                chapter_summary_obj = ChapterSummary(
+                    character="",  # Will be updated as we process
+                    summary=summary_text
+                )
+                initial_chapter_summaries.append(chapter_summary_obj)
+            
+            await ctx.store.set("chapter_summaries", initial_chapter_summaries)
+            await ctx.store.set("big_summaries", self.initial_long_summaries)
+            await ctx.store.set("characters", self.initial_characters)
+            
         summaries_segment = await ctx.store.get("chapter_summaries", [])
         chapter_summary = '\n'.join(summary.summary for summary in summaries_segment)
         chapters_summary_list = await ctx.store.get("big_summaries", [])
@@ -152,39 +169,66 @@ class BookSummary(Workflow, TrackApi):
         )
         return big_summary_response.content
 
-
-if __name__ == "__main__":
-    import os
-    import asyncio
-    
-    max_chapters = 100
-    gather_chapters = 1
-    big_summary_interval = 50
-    quota_per_minute = 15  # Adjust based on your API tier
-    summary_time_per_chapter = 20
-    name = "Cẩu Tại Sơ Thánh Ma Môn Làm Nhân Tài"
-
+async def Summary(
+    start_chapter = 0,
+    max_chapters = 100,
+    gather_chapters = 1,
+    summary_time_per_chapter = 20,
+    big_summary_interval = 50,
+    quota_per_minute = 15,
+    name = "Cẩu Tại Sơ Thánh Ma Môn Làm Nhân Tài",
+    saved_path = "summary",
+    short_summary_list = [],
+    long_summary_list = [],
+    characters = "",
+):
     story_paths = [
         os.path.join("story", name, f)
         for f in os.listdir(os.path.join("story", name))
         if f.endswith(".txt")
     ]
     story_paths.sort()
+    story_paths = story_paths[start_chapter:]
     w = BookSummary(
         story_paths, 
         big_summary_interval=big_summary_interval, 
         max_chapters=max_chapters, 
         gather_chapters=gather_chapters,
-        quota_per_minute=quota_per_minute  # Adjust based on your API tier
+        quota_per_minute=quota_per_minute,
+        initial_short_summaries=short_summary_list,
+        initial_long_summaries=long_summary_list,
+        initial_characters=characters,
     )
+    
+    result = await w.run(
+        timeout=max_chapters//gather_chapters*summary_time_per_chapter,
+    ) 
+    print("*"*10 + "final summary" + "*"*10)
+    print(result)
+    
+    with open(os.path.join(saved_path, name + "_summary.txt"), "w", encoding="utf-8") as f:
+        f.write(str(result).strip())  # Convert to string using __str__ method
+    return result
 
-    async def main():
-        result = await w.run(timeout=max_chapters//gather_chapters*summary_time_per_chapter)
-        print("*"*10 + "final summary" + "*"*10)
-        print(result)
-        return result
-        # draw_most_recent_execution()
+if __name__ == "__main__":
+    
+    max_chapters = 10
+    gather_chapters = 2
+    big_summary_interval = 50
+    quota_per_minute = 15  # Adjust based on your API tier
+    summary_time_per_chapter = 20
+    name = "Cẩu Tại Sơ Thánh Ma Môn Làm Nhân Tài"
+    
 
-    result = asyncio.run(main())
-    with open(os.path.join("summary", name + "_summary.txt"), "w", encoding="utf-8") as f:
-        f.write(result)
+    result = asyncio.run(
+        Summary(
+            start_chapter = 0,
+            max_chapters = max_chapters,
+            gather_chapters = gather_chapters,
+            big_summary_interval = big_summary_interval,
+            quota_per_minute = quota_per_minute,
+            summary_time_per_chapter = summary_time_per_chapter,
+            name = name,
+            saved_path = "summary",
+        )
+    )

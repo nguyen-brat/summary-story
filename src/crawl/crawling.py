@@ -124,5 +124,6 @@ class bns_crawler:
                 print(f"  ⚠️ Lỗi ở chương {i} ({link}): {e}")  
 
 #Example
-test = bns_crawler('https://bnsach.com/reader/cau-tai-so-thanh-ma-mon-lam-nhan-tai-convert', "story/com", True, 10)
-test.extract_content() 
+if __name__ == "__main__":
+    test = bns_crawler('https://bnsach.com/reader/cau-tai-so-thanh-ma-mon-lam-nhan-tai-convert', "story/com", True, 10)
+    test.extract_content() 
