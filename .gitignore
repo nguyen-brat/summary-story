@@ -9,3 +9,5 @@ wheels/
 # Virtual environments
 .venv
 .env
+test_rate_limit.py
+error.json
