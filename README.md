@@ -79,6 +79,27 @@ echo "GOOGLE_API_KEY=your_google_api_key_here" > .env
 
 ## How to Run
 
+### Option 1: Docker (Recommended)
+
+The easiest way to run AutoSummary is using Docker:
+
+```bash
+# Initial setup
+chmod +x docker-run.sh
+./docker-run.sh setup
+
+# Run the application
+./docker-run.sh start
+
+# Access at http://localhost:8501
+```
+
+For detailed Docker instructions, see [DOCKER.md](DOCKER.md).
+
+### Option 2: Local Development
+
+### Option 2: Local Development
+
 ### Quick Start with Scripts
 
 For convenience, you can use the provided scripts:
@@ -92,6 +113,22 @@ For convenience, you can use the provided scripts:
 ```
 
 ### Manual Execution
+
+#### Streamlit Web Interface (Recommended)
+
+Run the web interface for easy story crawling and summarization:
+
+```bash
+uv run streamlit run main.py
+```
+
+This will start a web interface at http://localhost:8501 where you can:
+- Crawl stories from websites with a user-friendly interface
+- Generate AI summaries interactively
+- Manage multiple stories and continue summaries
+- View crawling and summarization history
+
+#### Command Line Usage
 
 ### 1. Web Crawling
 

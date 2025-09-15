@@ -28,11 +28,23 @@ class bns_crawler:
         self.wait_s = wait_s
 
         opts = webdriver.ChromeOptions()
-        if headless:
-            opts.add_argument("--headless=new")
-        opts.add_argument("--no-sandbox")
-        opts.add_argument("--disable-dev-shm-usage")
-        opts.add_argument("--window-size=1280,1800")
+        
+        # Check for Docker/container environment Chrome options
+        chrome_options = os.getenv('CHROME_OPTIONS', '')
+        if chrome_options:
+            for option in chrome_options.split():
+                opts.add_argument(option)
+        else:
+            # Default options
+            if headless:
+                opts.add_argument("--headless=new")
+            opts.add_argument("--no-sandbox")
+            opts.add_argument("--disable-dev-shm-usage")
+            opts.add_argument("--disable-gpu")
+            opts.add_argument("--window-size=1280,1800")
+            opts.add_argument("--disable-extensions")
+            opts.add_argument("--disable-plugins")
+            opts.add_argument("--disable-images")  # Speed up crawling
 
         self.driver = webdriver.Chrome(
             service=Service(ChromeDriverManager().install()), options=opts

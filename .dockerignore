@@ -1,0 +1,8 @@
+# Add Docker-related files to gitignore
+.env
+*.log
+
+# Docker volumes
+/story/
+/summary/
+crawl_history.json
