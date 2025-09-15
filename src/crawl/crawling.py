@@ -45,7 +45,7 @@ class bns_crawler:
     def _visible(self, by, sel):
         return self.wait.until(EC.visibility_of_element_located((by, sel)))
 
-    def extract_chapter_list(self):
+    def extract_chapter_list(self, user_name, pass_word):
         #Login
         self.driver.get(self.url)
         self._ready()
@@ -56,8 +56,8 @@ class bns_crawler:
         username_input = self.wait.until(EC.presence_of_element_located((By.NAME, "login")))
         password = self.wait.until(EC.presence_of_element_located((By.NAME, "password")))
 
-        username_input.send_keys('Duyynh')
-        password.send_keys('13072003')
+        username_input.send_keys(user_name)
+        password.send_keys(pass_word)
 
         login_cf = self.wait.until(EC.presence_of_element_located(
             (By.XPATH, "//span[@class='button-text' and text()='Đăng nhập']")
@@ -90,8 +90,8 @@ class bns_crawler:
 
         return chapters
     
-    def extract_content(self):
-        chapters = self.extract_chapter_list()
+    def extract_content(self, user_name, pass_word):
+        chapters = self.extract_chapter_list(user_name, pass_word)
         self.driver.get(self.url)
         name = self.driver.find_element(By.ID, "truyen-title").text
         out_dir = os.path.join(self.out_dir, name)
@@ -125,5 +125,9 @@ class bns_crawler:
 
 #Example
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv()
+    user_name = os.getenv("user_name")
+    pass_word = os.getenv("pass_word")
     test = bns_crawler('https://bnsach.com/reader/cau-tai-so-thanh-ma-mon-lam-nhan-tai-convert', "story/com", True, 10)
-    test.extract_content() 
+    test.extract_content(user_name, pass_word)

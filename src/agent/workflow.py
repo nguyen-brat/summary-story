@@ -18,6 +18,7 @@ from llama_index.core.prompts import PromptTemplate
 import sys
 import os
 sys.path.append("..")
+sys.path.append(os.path.dirname(__file__))
 from trackapi import TrackApi
 from prompt import (
     FIRST_EXTRACTCHARACTERNSUMMARY_PROMPT_TMPL,
@@ -150,8 +151,8 @@ class BookSummary(Workflow, TrackApi):
                 await ctx.store.set("big_summaries", chapters_summary_list + [long_summary])
                 await ctx.store.set("chapter_summaries", [])
             
-            print(chapter_summary.summary)
-            print("-"*40)
+            # print(chapter_summary.summary)
+            # print("-"*40)
             return SummarizeEvent(summary=chapter_summary)
         
         return StopEvent(result=summaries)
@@ -178,6 +179,7 @@ async def Summary(
     quota_per_minute = 15,
     name = "Cẩu Tại Sơ Thánh Ma Môn Làm Nhân Tài",
     saved_path = "summary",
+    saved = False,
     short_summary_list = [],
     long_summary_list = [],
     characters = "",
@@ -202,13 +204,13 @@ async def Summary(
     
     result = await w.run(
         timeout=max_chapters//gather_chapters*summary_time_per_chapter,
-    ) 
-    print("*"*10 + "final summary" + "*"*10)
-    print(result)
+    )
     
-    with open(os.path.join(saved_path, name + "_summary.txt"), "w", encoding="utf-8") as f:
-        f.write(str(result).strip())  # Convert to string using __str__ method
-    return result
+    if saved:
+        os.makedirs(saved_path, exist_ok=True)
+        with open(os.path.join(saved_path, name + "_summary.txt"), "w", encoding="utf-8") as f:
+            f.write(str(result).strip())  # Convert to string using __str__ method
+        return result
 
 if __name__ == "__main__":
     
@@ -229,6 +231,10 @@ if __name__ == "__main__":
             quota_per_minute = quota_per_minute,
             summary_time_per_chapter = summary_time_per_chapter,
             name = name,
+            saved = False,
             saved_path = "summary",
         )
     )
+    
+    print("*"*10 + "final summary" + "*"*10)
+    print(result)
