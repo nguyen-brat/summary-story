@@ -98,8 +98,6 @@ For detailed Docker instructions, see [DOCKER.md](DOCKER.md).
 
 ### Option 2: Local Development
 
-### Option 2: Local Development
-
 ### Quick Start with Scripts
 
 For convenience, you can use the provided scripts:
@@ -219,5 +217,3 @@ uv sync
 ```
 
 ## License
-
-[Add your license information here]
