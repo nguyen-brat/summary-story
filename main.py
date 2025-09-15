@@ -3,6 +3,10 @@ import asyncio
 import os
 import sys
 import json
+import tempfile
+import re
+import shutil
+import atexit
 from datetime import datetime
 from pathlib import Path
 import time
@@ -11,6 +15,16 @@ import time
 sys.path.append("src")
 sys.path.append("src/agent")
 sys.path.append("src/crawl")
+
+# Initialize temp directory and register cleanup
+@atexit.register
+def cleanup_temp_dir():
+    """Clean up temporary directory on exit"""
+    if hasattr(st.session_state, 'temp_dir') and os.path.exists(st.session_state.temp_dir):
+        try:
+            shutil.rmtree(st.session_state.temp_dir, ignore_errors=True)
+        except:
+            pass  # Ignore cleanup errors
 
 from agent.workflow import Summary
 from crawl.crawling import bns_crawler
@@ -81,6 +95,8 @@ def init_session_state():
         st.session_state.current_operation = None
     if 'operation_status' not in st.session_state:
         st.session_state.operation_status = "ready"
+    if 'temp_dir' not in st.session_state:
+        st.session_state.temp_dir = tempfile.mkdtemp(prefix="story_crawler_")
 
 def load_crawl_history():
     """Load crawl history from JSON file"""
@@ -131,27 +147,53 @@ def display_chat_history():
         </div>
         """, unsafe_allow_html=True)
 
-async def crawl_story(url, username, password, output_dir="story"):
+def create_safe_folder_name(story_name):
+    """Create a safe folder name from story name by removing/replacing special characters"""
+    # Remove Vietnamese diacritics and special characters
+    safe_name = re.sub(r'[^\w\s-]', '', story_name)  # Remove special chars except word chars, spaces, hyphens
+    safe_name = re.sub(r'[-\s]+', '_', safe_name)     # Replace spaces and hyphens with underscores
+    safe_name = safe_name.strip('_')                   # Remove leading/trailing underscores
+    
+    # Limit length to avoid filesystem issues
+    if len(safe_name) > 50:
+        safe_name = safe_name[:50].rstrip('_')
+    
+    # Ensure it's not empty
+    if not safe_name:
+        safe_name = f"story_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    
+    return safe_name
+
+async def crawl_story(url, username, password, temp_dir):
     """Crawl story from website"""
     try:
         add_chat_message("system", f"🕷️ Starting to crawl story from: {url}")
         
-        crawler = bns_crawler(url, output_dir, headless=True, wait_s=12)
+        crawler = bns_crawler(url, temp_dir, headless=True, wait_s=12)
         
         # Extract story content
         crawler.extract_content(username, password)
         
-        # Get story name from the crawler
-        story_name = url.split("/")[-1].replace("-", " ").title()
+        # Get the actual story name from the website
+        from selenium.webdriver.common.by import By
+        crawler.driver.get(url)
+        crawler._ready()
+        actual_story_name = crawler.driver.find_element(By.ID, "truyen-title").text
+        crawler.driver.quit()  # Close the driver
         
-        add_chat_message("system", f"✅ Successfully crawled story: {story_name}")
+        # Create safe folder name
+        safe_folder_name = create_safe_folder_name(actual_story_name)
+        
+        add_chat_message("system", f"✅ Successfully crawled story: {actual_story_name}")
+        add_chat_message("system", f"📁 Stored in safe folder name: {safe_folder_name}")
         
         # Add to history
         history_entry = {
-            "name": story_name,
+            "name": actual_story_name,
+            "safe_folder_name": safe_folder_name,
             "url": url,
             "crawl_date": datetime.now().isoformat(),
-            "path": os.path.join(output_dir, story_name),
+            "temp_path": os.path.join(temp_dir, actual_story_name),
             "summary_data": {
                 "short_summaries": [],
                 "long_summaries": [],
@@ -163,41 +205,64 @@ async def crawl_story(url, username, password, output_dir="story"):
         st.session_state.crawl_history.append(history_entry)
         save_crawl_history(st.session_state.crawl_history)
         
-        return story_name
+        return safe_folder_name, actual_story_name
         
     except Exception as e:
         add_chat_message("error", f"❌ Error crawling story: {str(e)}")
-        return None
+        return None, None
 
-async def generate_summary(story_name, start_chapter, max_chapters, gather_chapters, 
+async def generate_summary(safe_folder_name, temp_dir, start_chapter, max_chapters, gather_chapters, 
                          big_summary_interval, quota_per_minute, summary_time_per_chapter,
                          short_summaries=None, long_summaries=None, characters=""):
     """Generate story summary"""
     try:
-        add_chat_message("system", f"🤖 Starting summary generation for: {story_name}")
+        add_chat_message("system", f"🤖 Starting summary generation for: {safe_folder_name}")
         add_chat_message("system", f"📊 Parameters: Chapters {start_chapter}-{start_chapter + max_chapters}, Gather: {gather_chapters}")
         
         # Set environment variable for API key
         if 'google_api_key' in st.session_state:
             os.environ['GOOGLE_API_KEY'] = st.session_state.google_api_key
         
-        result = await Summary(
-            start_chapter=start_chapter,
-            max_chapters=max_chapters,
+        # Find the story files in temp directory
+        story_files = []
+        for item in os.listdir(temp_dir):
+            item_path = os.path.join(temp_dir, item)
+            if os.path.isdir(item_path):
+                # Look for .txt files in this directory
+                txt_files = [f for f in os.listdir(item_path) if f.endswith('.txt')]
+                if txt_files:
+                    story_files = [os.path.join(item_path, f) for f in sorted(txt_files)]
+                    break
+        
+        if not story_files:
+            raise Exception("No story files found in temporary directory")
+        
+        # Use the custom Summary function that works with file paths
+        from agent.workflow import BookSummary
+        
+        w = BookSummary(
+            story_files[start_chapter:], 
+            big_summary_interval=big_summary_interval, 
+            max_chapters=max_chapters, 
             gather_chapters=gather_chapters,
-            summary_time_per_chapter=summary_time_per_chapter,
-            big_summary_interval=big_summary_interval,
             quota_per_minute=quota_per_minute,
-            name=story_name,
-            saved_path="summary",
-            saved=True,
-            short_summary_list=short_summaries or [],
-            long_summary_list=long_summaries or [],
-            characters=characters,
+            initial_short_summaries=short_summaries or [],
+            initial_long_summaries=long_summaries or [],
+            initial_characters=characters,
+        )
+        
+        result = await w.run(
+            timeout=max_chapters//gather_chapters*summary_time_per_chapter,
         )
         
         add_chat_message("system", f"✅ Summary generation completed!")
         add_chat_message("system", f"📝 Generated summary length: {len(str(result))} characters")
+        
+        # Save the result
+        summary_dir = "summary"
+        os.makedirs(summary_dir, exist_ok=True)
+        with open(os.path.join(summary_dir, f"{safe_folder_name}_summary.txt"), "w", encoding="utf-8") as f:
+            f.write(str(result).strip())
         
         return str(result)
         
@@ -238,6 +303,7 @@ def main():
                 with st.expander(f"📚 {story['name']}", expanded=False):
                     st.write(f"**URL:** {story['url']}")
                     st.write(f"**Crawled:** {story['crawl_date'][:10]}")
+                    st.write(f"**Safe Folder Name:** {story.get('safe_folder_name', 'N/A')}")
                     st.write(f"**Last Chapter:** {story['summary_data']['last_chapter']}")
                     
                     if st.button(f"Continue Summary", key=f"continue_{i}"):
@@ -255,6 +321,21 @@ def main():
         if st.button("🗑️ Clear Chat"):
             st.session_state.chat_history = []
             st.rerun()
+        
+        # Temporary Directory Info
+        st.divider()
+        st.header("📁 Temporary Storage")
+        st.info(f"**Temp Dir:** {st.session_state.temp_dir}")
+        
+        if st.button("🧹 Clear Temp Directory", help="Remove all temporary files"):
+            try:
+                import shutil
+                shutil.rmtree(st.session_state.temp_dir, ignore_errors=True)
+                st.session_state.temp_dir = tempfile.mkdtemp(prefix="story_crawler_")
+                add_chat_message("system", "🧹 Temporary directory cleared and recreated")
+                st.rerun()
+            except Exception as e:
+                add_chat_message("error", f"❌ Error clearing temp directory: {e}")
     
     # Main content area
     col1, col2 = st.columns([1, 1])
@@ -291,10 +372,10 @@ def main():
                 
                 # Run crawl and summary in sequence
                 async def run_crawl_and_summary():
-                    story_name = await crawl_story(story_url, username, password)
-                    if story_name:
+                    safe_folder_name, actual_name = await crawl_story(story_url, username, password, st.session_state.temp_dir)
+                    if safe_folder_name:
                         summary = await generate_summary(
-                            story_name, 0, max_chapters, gather_chapters,
+                            safe_folder_name, st.session_state.temp_dir, 0, max_chapters, gather_chapters,
                             big_summary_interval, quota_per_minute, summary_time_per_chapter
                         )
                         if summary:
@@ -319,10 +400,15 @@ def main():
         with st.form("continue_form"):
             if selected_story:
                 st.info(f"Selected story: **{selected_story['name']}**")
-                story_name_continue = selected_story['name']
+                safe_folder_name_continue = selected_story.get('safe_folder_name', selected_story['name'])
             else:
-                story_name_continue = st.text_input("Story Name", 
-                                                  placeholder="Enter story name from history")
+                available_stories = [story.get('safe_folder_name', story['name']) for story in st.session_state.crawl_history]
+                if available_stories:
+                    safe_folder_name_continue = st.selectbox("Select Story", options=available_stories, help="Choose from previously crawled stories")
+                else:
+                    safe_folder_name_continue = st.text_input("Safe Folder Name", 
+                                                            placeholder="Enter safe folder name from history",
+                                                            help="This should be the safe folder name shown in story history")
             
             st.subheader("📋 Continue Settings")
             col_c, col_d = st.columns(2)
@@ -342,10 +428,10 @@ def main():
             continue_summary = st.form_submit_button("🔄 Continue Summary", type="primary")
         
         if continue_summary:
-            if not all([story_name_continue, google_api_key]):
-                add_chat_message("error", "❌ Please provide story name and API key")
+            if not all([safe_folder_name_continue, google_api_key]):
+                add_chat_message("error", "❌ Please provide safe folder name and API key")
             else:
-                add_chat_message("user", f"Continuing summary for: {story_name_continue} from chapter {start_chapter}")
+                add_chat_message("user", f"Continuing summary for: {safe_folder_name_continue} from chapter {start_chapter}")
                 
                 # Prepare previous data
                 short_list = [s.strip() for s in previous_short.split('\n') if s.strip()] if previous_short else []
@@ -353,7 +439,7 @@ def main():
                 
                 async def run_continue_summary():
                     summary = await generate_summary(
-                        story_name_continue, start_chapter, max_chapters_continue, 
+                        safe_folder_name_continue, st.session_state.temp_dir, start_chapter, max_chapters_continue, 
                         gather_chapters_continue, 50, 15, summary_time_continue,
                         short_list, long_list, previous_characters
                     )
