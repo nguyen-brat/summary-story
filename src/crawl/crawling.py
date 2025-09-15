@@ -13,17 +13,20 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.action_chains import ActionChains
 from urllib.parse import urljoin
+import random
 
 class bns_crawler:
     def __init__(
             self,
             url: str,
             out_dir: str,
+            n_chapter: int=100000,
             headless: bool=True,
             wait_s: int=12,
     ) -> None:
         self.url = url
         self.out_dir = out_dir
+        self.n_chapter = n_chapter
         self.headless = headless
         self.wait_s = wait_s
 
@@ -100,6 +103,9 @@ class bns_crawler:
 
             chapters.append((i, title, href))
 
+        if len(chapters) > self.n_chapter:    
+            chapters = chapters[:self.n_chapter]
+
         return chapters
     
     def extract_content(self, user_name, pass_word):
@@ -110,6 +116,11 @@ class bns_crawler:
         Path(out_dir).mkdir(parents=True, exist_ok=True)
 
         for i, title, link in chapters:
+            time.sleep(random.uniform(0.8,1.6))
+
+            if i % 200 == 0:
+                time.sleep(random.randint(10, 30))
+    
             print(f"Đang tải chương {i}: {title} - {link}")
             try:
                 self.driver.get(link)
@@ -131,9 +142,9 @@ class bns_crawler:
                     f.write(title + "\n\n")
                     f.write(chap_text + "\n")
 
-                print(f"  ✓ Saved {fpath.name}")
+                print(f"Saved {fpath.name}")
             except Exception as e:
-                print(f"  ⚠️ Lỗi ở chương {i} ({link}): {e}")  
+                print(f"Lỗi ở chương {i} ({link}): {e}")  
 
 #Example
 if __name__ == "__main__":
@@ -141,5 +152,5 @@ if __name__ == "__main__":
     load_dotenv()
     user_name = os.getenv("user_name")
     pass_word = os.getenv("pass_word")
-    test = bns_crawler('https://bnsach.com/reader/cau-tai-so-thanh-ma-mon-lam-nhan-tai-convert', "story/com", True, 10)
+    test = bns_crawler('https://bnsach.com/reader/cau-tai-so-thanh-ma-mon-lam-nhan-tai-convert', "story/com", 100, True, 10)
     test.extract_content(user_name, pass_word)
