@@ -1,8 +1,40 @@
-# Add Docker-related files to gitignore
+# Ignore environment files - users input credentials in UI
 .env
+.env.*
 *.log
 
-# Docker volumes
+# Ignore development and testing files
+test_crawler.py
+run.sh
+scripts/
+README.md
+DOCKER.md
+
+# Ignore git and IDE files
+.git/
+.gitignore
+.vscode/
+
+# Ignore temporary and cache files
 /story/
 /summary/
 crawl_history.json
+error.json
+*.tmp
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore Python cache
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+.pytest_cache/
+
+# Ignore Docker files in container
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-run.sh

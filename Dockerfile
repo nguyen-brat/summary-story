@@ -38,8 +38,10 @@ COPY pyproject.toml uv.lock ./
 # Install Python dependencies using uv
 RUN uv sync --frozen
 
-# Copy application code
-COPY . .
+# Copy only necessary files (exclude .env and other unnecessary files)
+# Note: No .env file needed - users input all credentials via the web UI
+COPY src/ ./src/
+COPY app.py ./
 
 # Create directories for stories and summaries
 RUN mkdir -p /app/story /app/summary
@@ -60,4 +62,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8501/_stcore/health || exit 1
 
 # Default command to run Streamlit app
-CMD ["uv", "run", "streamlit", "run", "main.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"]
+CMD ["uv", "run", "streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"]
