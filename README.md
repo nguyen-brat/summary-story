@@ -100,7 +100,29 @@ For detailed Docker instructions, see [DOCKER.md](DOCKER.md).
 
 ### Quick Start with Scripts
 
-For convenience, you can use the provided scripts:
+The easiest way to run AutoSummary locally is using the run script:
+
+```bash
+# Make the script executable (first time only)
+chmod +x run.sh
+
+# Run the application
+./run.sh
+```
+
+Or manually:
+
+```bash
+uv run streamlit run main.py
+```
+
+This will start a web interface at http://localhost:8501 with:
+- **Single Column Layout**: New Story form above Continue Story form
+- **Real-time Chapter Summaries**: See chapter summaries as they're generated
+- **Streaming Updates**: Activity log updates immediately without waiting
+- **Story Management**: Easy access to story history and continuation
+
+For convenience, you can also use the provided scripts:
 
 ```bash
 # Run the web crawler
@@ -109,6 +131,16 @@ For convenience, you can use the provided scripts:
 # Run the AI summarization
 ./scripts/summarize.sh
 ```
+
+### Features
+
+#### Web Interface Features
+- **New Story Section**: Crawl and summarize new stories
+- **Continue Summary Section**: Resume processing from where you left off
+- **Real-time Streaming**: Chapter summaries appear immediately as processed
+- **Story History**: Manage multiple stories with persistent history
+- **Activity Log**: Real-time updates without waiting for completion
+- **API Management**: Easy API key configuration in the sidebar
 
 ### Manual Execution
 

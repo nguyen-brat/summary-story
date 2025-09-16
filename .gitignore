@@ -11,3 +11,5 @@ wheels/
 .env
 test_rate_limit.py
 error.json
+lib
+.vscode

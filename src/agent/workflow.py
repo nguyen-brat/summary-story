@@ -24,6 +24,7 @@ from prompt import (
     FIRST_EXTRACTCHARACTERNSUMMARY_PROMPT_TMPL,
     EXTRACT_CHARACTERSNSUMMARY_PROMPT_TMPL,
     LONG_SUMMARY_PROMPT_TMPL,
+    REWRITE_SUMMARY_PROMPT_TMPL
 )
 load_dotenv()
 
@@ -33,6 +34,9 @@ class ChapterSummary(BaseModel):
 
 class SummarizeEvent(Event):
     summary: ChapterSummary = Field(description="Tóm tắt các chương truyện trước và danh sách các nhân vật")
+
+class ProgressSummaryEvent(Event):
+    msg: str = Field(description="Progress message")
 
 class BookSummary(Workflow, TrackApi):
     def __init__(
@@ -128,34 +132,38 @@ class BookSummary(Workflow, TrackApi):
         if (len(summaries_segment)*self.gather_chapters < self.max_chapters) and chapter_text:
             if (summaries_segment == []) and (chapters_summary_list == []):
                 chapter_summary = await self._rate_limited_llm_call(
-                    self.llm.structured_predict,
+                    self.llm.astructured_predict,
                     ChapterSummary,
                     PromptTemplate(FIRST_EXTRACTCHARACTERNSUMMARY_PROMPT_TMPL),
-                    chapter_text = chapter_text,
+                    chapter_text = chapter_text
                 )
+                ctx.write_event_to_stream(ProgressSummaryEvent(msg=chapter_summary.summary))
             else:
                 chapter_summary = await self._rate_limited_llm_call(
-                    self.llm.structured_predict,
+                    self.llm.astructured_predict,
                     ChapterSummary,
                     PromptTemplate(EXTRACT_CHARACTERSNSUMMARY_PROMPT_TMPL),
                     characters = characters,
                     previous_summary = summaries,
-                    chapter_text = chapter_text,
+                    chapter_text = chapter_text
                 )
+                ctx.write_event_to_stream(ProgressSummaryEvent(msg=chapter_summary.summary))
             summaries_segment.append(chapter_summary)
             await ctx.store.set("chapter_summaries", summaries_segment)
             await ctx.store.set("characters", chapter_summary.character)
             
-            if (len(summaries_segment)*self.gather_chapters + 1) % self.big_summary_interval == 0:
+            if ((len(summaries_segment)*self.gather_chapters) % self.big_summary_interval == 0) and (not isinstance(ev, StartEvent)):
                 long_summary = await self.big_summary(ctx, summaries_segment)
                 await ctx.store.set("big_summaries", chapters_summary_list + [long_summary])
                 await ctx.store.set("chapter_summaries", [])
             
-            # print(chapter_summary.summary)
-            # print("-"*40)
             return SummarizeEvent(summary=chapter_summary)
         
-        return StopEvent(result=summaries)
+        rewrite_summary = await self._rate_limited_llm_call(
+            self.llm.chat,
+            [ChatMessage(role="user", content=REWRITE_SUMMARY_PROMPT_TMPL.format(summary=summaries))]
+        )
+        return StopEvent(result=rewrite_summary.content)
         
     async def big_summary(
         self,
@@ -165,7 +173,7 @@ class BookSummary(Workflow, TrackApi):
         characters = await ctx.store.get("characters", "")
         summaries = '\n'.join(summary.summary for summary in chapter_summary)
         big_summary_response = await self._rate_limited_llm_call(
-            self.llm.achat,
+            self.llm.chat,
             [ChatMessage(role="user", content=LONG_SUMMARY_PROMPT_TMPL.format(characters=characters,summaries=summaries))]
         )
         return big_summary_response.content
@@ -173,7 +181,7 @@ class BookSummary(Workflow, TrackApi):
 async def Summary(
     start_chapter = 0,
     max_chapters = 100,
-    gather_chapters = 1,
+    gather_chapters = 10,
     summary_time_per_chapter = 20,
     big_summary_interval = 50,
     quota_per_minute = 15,
@@ -202,9 +210,16 @@ async def Summary(
         initial_characters=characters,
     )
     
-    result = await w.run(
+    handler = w.run(
         timeout=max_chapters//gather_chapters*summary_time_per_chapter,
     )
+
+    async for ev in handler.stream_events():
+        if isinstance(ev, ProgressSummaryEvent):
+            print(ev.msg)
+            print("-"*40)
+
+    result = await handler
     
     if saved:
         os.makedirs(saved_path, exist_ok=True)
@@ -213,7 +228,6 @@ async def Summary(
         return result
 
 if __name__ == "__main__":
-    
     max_chapters = 10
     gather_chapters = 2
     big_summary_interval = 50
@@ -235,6 +249,6 @@ if __name__ == "__main__":
             saved_path = "summary",
         )
     )
-    
+        
     print("*"*10 + "final summary" + "*"*10)
     print(result)

@@ -97,6 +97,10 @@ def init_session_state():
         st.session_state.operation_status = "ready"
     if 'temp_dir' not in st.session_state:
         st.session_state.temp_dir = tempfile.mkdtemp(prefix="story_crawler_")
+    if 'streaming_summaries' not in st.session_state:
+        st.session_state.streaming_summaries = []
+    if 'current_chapter' not in st.session_state:
+        st.session_state.current_chapter = 0
 
 def load_crawl_history():
     """Load crawl history from JSON file"""
@@ -168,18 +172,64 @@ async def crawl_story(url, username, password, temp_dir):
     """Crawl story from website"""
     try:
         add_chat_message("system", f"🕷️ Starting to crawl story from: {url}")
+        add_chat_message("system", f"🔧 Initializing crawler with headless browser...")
         
-        crawler = bns_crawler(url, temp_dir, headless=True, wait_s=12)
+        # Debug mode handling
+        debug_mode = st.session_state.get('debug_mode', False)
+        if debug_mode:
+            add_chat_message("system", f"🐛 Debug mode enabled - using visible browser")
         
-        # Extract story content
-        crawler.extract_content(username, password)
+        # Create crawler instance with debug settings
+        crawler = bns_crawler(
+            url, 
+            temp_dir, 
+            headless=not debug_mode,  # Use visible browser in debug mode
+            wait_s=20 if debug_mode else 15  # Longer waits in debug mode
+        )
         
-        # Get the actual story name from the website
-        from selenium.webdriver.common.by import By
-        crawler.driver.get(url)
-        crawler._ready()
-        actual_story_name = crawler.driver.find_element(By.ID, "truyen-title").text
-        crawler.driver.quit()  # Close the driver
+        add_chat_message("system", f"🌐 Logging in and extracting chapter list...")
+        
+        # Extract story content (this is a blocking operation)
+        # Run in executor to avoid blocking the async event loop
+        import asyncio
+        loop = asyncio.get_event_loop()
+        
+        def run_extraction():
+            try:
+                add_chat_message("system", "🔐 Attempting to login to website...")
+                actual_story_name = crawler.extract_content(username, password)
+                add_chat_message("system", f"📝 Successfully extracted story: {actual_story_name}")
+                return actual_story_name
+            except Exception as e:
+                error_msg = f"Error in extraction: {str(e)}"
+                print(error_msg)
+                add_chat_message("error", f"❌ Crawler error: {error_msg}")
+                raise e
+            finally:
+                # Always close the driver
+                try:
+                    crawler.driver.quit()
+                    add_chat_message("system", "🔒 Browser driver closed")
+                except Exception as cleanup_error:
+                    print(f"Error closing driver: {cleanup_error}")
+                    add_chat_message("system", f"⚠️ Warning: Issue closing browser: {cleanup_error}")
+        
+        # Run the extraction in a thread to avoid blocking with timeout
+        try:
+            actual_story_name = await asyncio.wait_for(
+                loop.run_in_executor(None, run_extraction),
+                timeout=300  # 5 minutes timeout
+            )
+        except asyncio.TimeoutError:
+            add_chat_message("error", "❌ Crawling operation timed out after 5 minutes")
+            try:
+                crawler.driver.quit()
+            except:
+                pass
+            raise Exception("Crawling timed out after 5 minutes")
+        
+        if not actual_story_name:
+            raise Exception("Failed to extract story name")
         
         # Create safe folder name
         safe_folder_name = create_safe_folder_name(actual_story_name)
@@ -209,12 +259,18 @@ async def crawl_story(url, username, password, temp_dir):
         
     except Exception as e:
         add_chat_message("error", f"❌ Error crawling story: {str(e)}")
+        # Make sure to close the driver if it exists
+        try:
+            if 'crawler' in locals() and hasattr(crawler, 'driver'):
+                crawler.driver.quit()
+        except:
+            pass
         return None, None
 
 async def generate_summary(safe_folder_name, temp_dir, start_chapter, max_chapters, gather_chapters, 
                          big_summary_interval, quota_per_minute, summary_time_per_chapter,
-                         short_summaries=None, long_summaries=None, characters=""):
-    """Generate story summary"""
+                         short_summaries=None, long_summaries=None, characters="", streaming_placeholder=None):
+    """Generate story summary with streaming updates"""
     try:
         add_chat_message("system", f"🤖 Starting summary generation for: {safe_folder_name}")
         add_chat_message("system", f"📊 Parameters: Chapters {start_chapter}-{start_chapter + max_chapters}, Gather: {gather_chapters}")
@@ -239,6 +295,7 @@ async def generate_summary(safe_folder_name, temp_dir, start_chapter, max_chapte
         
         # Use the custom Summary function that works with file paths
         from agent.workflow import BookSummary
+        from agent.workflow import ProgressSummaryEvent
         
         w = BookSummary(
             story_files[start_chapter:], 
@@ -251,20 +308,56 @@ async def generate_summary(safe_folder_name, temp_dir, start_chapter, max_chapte
             initial_characters=characters,
         )
         
-        result = await w.run(
+        # Clear previous streaming data
+        st.session_state.streaming_summaries = []
+        st.session_state.current_chapter = 0
+        
+        handler = w.run(
             timeout=max_chapters//gather_chapters*summary_time_per_chapter,
         )
+
+        # Stream events and update UI in real-time
+        async for ev in handler.stream_events():
+            if isinstance(ev, ProgressSummaryEvent):
+                st.session_state.current_chapter += 1
+                chapter_summary = {
+                    "chapter": st.session_state.current_chapter,
+                    "summary": ev.msg,
+                    "timestamp": datetime.now().strftime("%H:%M:%S")
+                }
+                st.session_state.streaming_summaries.append(chapter_summary)
+                
+                # Add to chat log immediately
+                add_chat_message("system", f"📖 Chapter {st.session_state.current_chapter}: {ev.msg[:100]}...")
+                
+                # Update the streaming placeholder if provided
+                if streaming_placeholder:
+                    with streaming_placeholder.container():
+                        st.success(f"✅ Processed Chapter {st.session_state.current_chapter}")
+                        st.text_area(
+                            f"Chapter {st.session_state.current_chapter} Summary:", 
+                            ev.msg, 
+                            height=120, 
+                            key=f"stream_chapter_{st.session_state.current_chapter}"
+                        )
+                        
+                        # Show all processed chapters
+                        if len(st.session_state.streaming_summaries) > 1:
+                            with st.expander(f"📚 All {len(st.session_state.streaming_summaries)} Processed Chapters"):
+                                for i, chap in enumerate(st.session_state.streaming_summaries, 1):
+                                    st.text_area(
+                                        f"Chapter {chap['chapter']} ({chap['timestamp']}):", 
+                                        chap['summary'], 
+                                        height=80,
+                                        key=f"all_chapters_{i}"
+                                    )
+
+        result = await handler
         
         add_chat_message("system", f"✅ Summary generation completed!")
         add_chat_message("system", f"📝 Generated summary length: {len(str(result))} characters")
         
-        # Save the result
-        summary_dir = "summary"
-        os.makedirs(summary_dir, exist_ok=True)
-        with open(os.path.join(summary_dir, f"{safe_folder_name}_summary.txt"), "w", encoding="utf-8") as f:
-            f.write(str(result).strip())
-        
-        return str(result)
+        return str(result).strip()
         
     except Exception as e:
         add_chat_message("error", f"❌ Error generating summary: {str(e)}")
@@ -292,6 +385,9 @@ def main():
         with st.expander("🌐 Website Credentials", expanded=True):
             username = st.text_input("Username", help="Website login username")
             password = st.text_input("Password", type="password", help="Website login password")
+            
+            # Add debug mode option
+            debug_mode = st.checkbox("🐛 Debug Mode", help="Enable detailed logging for troubleshooting")
         
         st.divider()
         
@@ -337,11 +433,11 @@ def main():
             except Exception as e:
                 add_chat_message("error", f"❌ Error clearing temp directory: {e}")
     
-    # Main content area
-    col1, col2 = st.columns([1, 1])
+    # Main content area - Single column layout
+    col_main = st.columns([1])[0]
     
-    # Left column - New Crawl
-    with col1:
+    with col_main:
+        # New Story Section
         st.header("🆕 New Story")
         
         with st.form("crawl_form"):
@@ -362,36 +458,15 @@ def main():
                                                      min_value=1, value=20)
             
             crawl_and_summarize = st.form_submit_button("🚀 Crawl & Summarize", type="primary")
+            
+            # Add test button for debugging
+            col_test, col_empty = st.columns([1, 2])
+            with col_test:
+                test_crawler = st.form_submit_button("🧪 Test Crawler", help="Test crawler initialization without full crawl")
         
-        if crawl_and_summarize:
-            if not all([story_url, username, password, google_api_key]):
-                add_chat_message("error", "❌ Please fill in all required fields (URL, credentials, API key)")
-            else:
-                add_chat_message("user", f"Starting new crawl and summary for: {story_url}")
-                st.session_state.operation_status = "running"
-                
-                # Run crawl and summary in sequence
-                async def run_crawl_and_summary():
-                    safe_folder_name, actual_name = await crawl_story(story_url, username, password, st.session_state.temp_dir)
-                    if safe_folder_name:
-                        summary = await generate_summary(
-                            safe_folder_name, st.session_state.temp_dir, 0, max_chapters, gather_chapters,
-                            big_summary_interval, quota_per_minute, summary_time_per_chapter
-                        )
-                        if summary:
-                            add_chat_message("system", f"📄 Final Summary:\n\n{summary[:500]}...")
-                
-                # Execute async function
-                try:
-                    asyncio.run(run_crawl_and_summary())
-                except Exception as e:
-                    add_chat_message("error", f"❌ Operation failed: {str(e)}")
-                finally:
-                    st.session_state.operation_status = "ready"
-                    st.rerun()
-    
-    # Right column - Continue Summary
-    with col2:
+        st.divider()
+        
+        # Continue Summary Section
         st.header("▶️ Continue Summary")
         
         # Check if a story is selected from history
@@ -427,11 +502,192 @@ def main():
             
             continue_summary = st.form_submit_button("🔄 Continue Summary", type="primary")
         
+        st.divider()
+        
+        # Streaming Output Section
+        st.header("📝 Real-time Chapter Summaries")
+        
+        # Create placeholder for streaming updates
+        streaming_placeholder = st.empty()
+        
+        # Show current streaming status
+        if st.session_state.operation_status == "running":
+            with streaming_placeholder.container():
+                st.info("🔄 Processing chapters... Summaries will appear here in real-time.")
+                
+                # Display any existing streaming summaries
+                if st.session_state.streaming_summaries:
+                    latest_summary = st.session_state.streaming_summaries[-1]
+                    st.success(f"✅ Latest: Chapter {latest_summary['chapter']} processed at {latest_summary['timestamp']}")
+                    st.text_area(
+                        f"Chapter {latest_summary['chapter']} Summary:", 
+                        latest_summary['summary'], 
+                        height=120
+                    )
+                    
+                    if len(st.session_state.streaming_summaries) > 1:
+                        with st.expander(f"📚 View All {len(st.session_state.streaming_summaries)} Processed Chapters"):
+                            for chap in st.session_state.streaming_summaries:
+                                st.text_area(
+                                    f"Chapter {chap['chapter']} ({chap['timestamp']}):", 
+                                    chap['summary'], 
+                                    height=80,
+                                    key=f"display_chap_{chap['chapter']}"
+                                )
+        elif st.session_state.streaming_summaries:
+            # Show completed summaries
+            with streaming_placeholder.container():
+                st.success(f"✅ Completed! Processed {len(st.session_state.streaming_summaries)} chapters")
+                
+                # Show latest summary
+                latest_summary = st.session_state.streaming_summaries[-1]
+                st.text_area(
+                    f"Final Chapter {latest_summary['chapter']} Summary:", 
+                    latest_summary['summary'], 
+                    height=120
+                )
+                
+                # Show all summaries in expander
+                with st.expander(f"📚 View All {len(st.session_state.streaming_summaries)} Chapters"):
+                    for chap in st.session_state.streaming_summaries:
+                        st.text_area(
+                            f"Chapter {chap['chapter']} ({chap['timestamp']}):", 
+                            chap['summary'], 
+                            height=80,
+                            key=f"final_chap_{chap['chapter']}"
+                        )
+                        
+                # Clear summaries button
+                if st.button("🗑️ Clear Chapter Summaries"):
+                    st.session_state.streaming_summaries = []
+                    st.session_state.current_chapter = 0
+                    st.rerun()
+        else:
+            with streaming_placeholder.container():
+                st.info("👆 Start a crawl or continue a summary above to see real-time chapter summaries here!")
+        
+        # Process form submissions
+        if crawl_and_summarize:
+            if not all([story_url, username, password, google_api_key]):
+                add_chat_message("error", "❌ Please fill in all required fields (URL, credentials, API key)")
+            else:
+                # Store debug mode in session state
+                st.session_state.debug_mode = debug_mode
+                
+                add_chat_message("user", f"Starting new crawl and summary for: {story_url}")
+                add_chat_message("system", f"🔧 Preparing to crawl with settings: Max chapters: {max_chapters}, Gather: {gather_chapters}")
+                if debug_mode:
+                    add_chat_message("system", f"🐛 Debug mode is ON - browser will be visible and use longer timeouts")
+                st.session_state.operation_status = "running"
+                st.rerun()  # Trigger immediate UI update
+                
+                # Run crawl and summary in sequence with streaming
+                async def run_crawl_and_summary():
+                    try:
+                        add_chat_message("system", "🚀 Starting crawling process...")
+                        safe_folder_name, actual_name = await crawl_story(story_url, username, password, st.session_state.temp_dir)
+                        
+                        if safe_folder_name and actual_name:
+                            add_chat_message("system", f"✅ Crawling completed for: {actual_name}")
+                            add_chat_message("system", "🤖 Starting AI summarization...")
+                            
+                            summary = await generate_summary(
+                                safe_folder_name, st.session_state.temp_dir, 0, max_chapters, gather_chapters,
+                                big_summary_interval, quota_per_minute, summary_time_per_chapter,
+                                streaming_placeholder=streaming_placeholder
+                            )
+                            if summary:
+                                add_chat_message("system", f"📄 Final Summary:\n\n{summary[:500]}...")
+                        else:
+                            add_chat_message("error", "❌ Crawling failed - cannot proceed with summarization")
+                    except Exception as e:
+                        add_chat_message("error", f"❌ Error in crawl and summary process: {str(e)}")
+                        import traceback
+                        add_chat_message("error", f"🔍 Traceback: {traceback.format_exc()}")
+                
+                # Execute async function with better error handling
+                try:
+                    asyncio.run(run_crawl_and_summary())
+                except Exception as e:
+                    add_chat_message("error", f"❌ Operation failed: {str(e)}")
+                    import traceback
+                    add_chat_message("error", f"🔍 Full traceback: {traceback.format_exc()}")
+                finally:
+                    st.session_state.operation_status = "ready"
+                    st.rerun()
+        
+        # Handle test crawler button
+        if test_crawler:
+            if not story_url:
+                add_chat_message("error", "❌ Please provide a story URL for testing")
+            else:
+                add_chat_message("user", f"🧪 Testing crawler initialization for: {story_url}")
+                st.session_state.operation_status = "running"
+                st.rerun()
+                
+                async def test_crawler_func():
+                    try:
+                        add_chat_message("system", "🧪 Starting crawler test...")
+                        
+                        # Store debug mode
+                        st.session_state.debug_mode = debug_mode
+                        
+                        # Test crawler initialization
+                        test_crawler = bns_crawler(
+                            story_url, 
+                            st.session_state.temp_dir,
+                            headless=not debug_mode,
+                            wait_s=20 if debug_mode else 15
+                        )
+                        add_chat_message("system", "✅ Crawler initialized successfully")
+                        
+                        # Test navigation
+                        add_chat_message("system", "🌐 Testing navigation to story page...")
+                        test_crawler.driver.get(story_url)
+                        test_crawler._ready()
+                        
+                        page_title = test_crawler.driver.title
+                        add_chat_message("system", f"📄 Page loaded: {page_title}")
+                        
+                        # Test login elements
+                        add_chat_message("system", "🔍 Looking for login elements...")
+                        try:
+                            login_btn = test_crawler.driver.find_element(By.CSS_SELECTOR, "a.bg-blue-600")
+                            add_chat_message("system", "✅ Login button found")
+                        except Exception as e:
+                            add_chat_message("error", f"❌ Login button not found: {e}")
+                        
+                        # Close driver
+                        test_crawler.driver.quit()
+                        add_chat_message("system", "✅ Test completed successfully!")
+                        
+                    except Exception as e:
+                        add_chat_message("error", f"❌ Test failed: {str(e)}")
+                        import traceback
+                        add_chat_message("error", f"🔍 Traceback: {traceback.format_exc()}")
+                        try:
+                            if 'test_crawler' in locals():
+                                test_crawler.driver.quit()
+                        except:
+                            pass
+                
+                try:
+                    # Import here to avoid issues
+                    from selenium.webdriver.common.by import By
+                    asyncio.run(test_crawler_func())
+                except Exception as e:
+                    add_chat_message("error", f"❌ Test execution failed: {str(e)}")
+                finally:
+                    st.session_state.operation_status = "ready"
+                    st.rerun()
+        
         if continue_summary:
             if not all([safe_folder_name_continue, google_api_key]):
                 add_chat_message("error", "❌ Please provide safe folder name and API key")
             else:
                 add_chat_message("user", f"Continuing summary for: {safe_folder_name_continue} from chapter {start_chapter}")
+                st.session_state.operation_status = "running"
+                st.rerun()  # Trigger immediate UI update
                 
                 # Prepare previous data
                 short_list = [s.strip() for s in previous_short.split('\n') if s.strip()] if previous_short else []
@@ -441,7 +697,7 @@ def main():
                     summary = await generate_summary(
                         safe_folder_name_continue, st.session_state.temp_dir, start_chapter, max_chapters_continue, 
                         gather_chapters_continue, 50, 15, summary_time_continue,
-                        short_list, long_list, previous_characters
+                        short_list, long_list, previous_characters, streaming_placeholder=streaming_placeholder
                     )
                     if summary:
                         add_chat_message("system", f"📄 Continued Summary:\n\n{summary[:500]}...")
@@ -451,6 +707,7 @@ def main():
                 except Exception as e:
                     add_chat_message("error", f"❌ Continue operation failed: {str(e)}")
                 finally:
+                    st.session_state.operation_status = "ready"
                     st.rerun()
     
     # Chat area

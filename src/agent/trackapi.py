@@ -54,7 +54,7 @@ class TrackApi:
         Wrapper for LLM calls with rate limiting for Google Gemini free tier.
         Dynamically adjusts based on API error responses.
         """
-        max_retries = 5
+        max_retries = 2
         base_delay = 60 // self.quota_per_minute
 
         for attempt in range(max_retries):

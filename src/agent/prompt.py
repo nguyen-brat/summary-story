@@ -42,7 +42,7 @@ Truyện:
 
 ###
 LONG_SUMMARY_PROMPT_TMPL = """Dựa vào tóm tắt các chương truyện trước được cung cấp dưới đây \
-viết lại thành một tóm tắt những diễn biến chính xoay quanh nhân vật chính (được đề cập nhiều nhất trong truyện). \
+viết lại thành một tóm tắt những diễn biến chính. \
 Trả lời ngay vào tóm tắt không trả lời thêm gì khác như ví dụ.
 Tóm tắt chính:
 Tóm_tắt_cốt_truyện
@@ -57,4 +57,19 @@ Tóm tắt các chương truyện trước:
 
 -----
 Tóm tắt chính:
+"""
+
+REWRITE_SUMMARY_PROMPT_TMPL = """Viết lại tóm tắt dưới đây cho ngắn gọn hơn, súc tích hơn,\
+không lặp từ, không lặp ý, không thêm bớt ý, không thay đổi ý nghĩa.\
+Trả lời ngay vào tóm tắt không trả lời thêm gì khác như ví dụ:
+Tóm tắt:
+Tóm_tắt
+-----
+Tóm tắt rút gọn:
+Tóm_tắt_rút_gọn
+
+Tóm tắt:
+{summary}
+-----
+Tóm tắt rút gọn:
 """
