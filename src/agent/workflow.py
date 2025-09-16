@@ -51,6 +51,7 @@ class BookSummary(Workflow, TrackApi):
         initial_long_summaries: List[str] = None,
         initial_characters: str = "",
         system_prompt=None,
+        api_key: str = None,
         **kwargs
     ):
         Workflow.__init__(self, **kwargs)
@@ -61,11 +62,13 @@ class BookSummary(Workflow, TrackApi):
             Bạn là một trợ lí nhiệm vụ của bạn là tóm tắt lại một câu chuyện.\
             trả lời bằng tiếng Việt.
             """
+        if api_key is None:
+            api_key = os.getenv("GOOGLE_API_KEY")
         self.story_paths = story_paths
         self.big_summary_interval = big_summary_interval
         self.max_chapters = max_chapters
         self.gather_chapters = gather_chapters
-        self.llm = GoogleGenAI(model="models/gemini-2.0-flash", system_prompt=system_prompt)
+        self.llm = GoogleGenAI(model="models/gemini-2.0-flash", system_prompt=system_prompt, api_key=api_key)
         self.chapter_generator = self.get_chapter(gather_chapters)
         
         # Store initial data
