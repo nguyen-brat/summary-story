@@ -64,12 +64,12 @@ không lặp từ, không lặp ý, không thêm bớt ý, không thay đổi ý
 Trả lời ngay vào tóm tắt không trả lời thêm gì khác như ví dụ:
 Tóm tắt:
 Tóm_tắt
------
+
 Tóm tắt rút gọn:
 Tóm_tắt_rút_gọn
-
+-----
 Tóm tắt:
 {summary}
------
+
 Tóm tắt rút gọn:
 """

@@ -20,13 +20,13 @@ class bns_crawler:
             self,
             url: str,
             out_dir: str,
-            n_chapter: int=100,
+            n_chapters: int=100,
             headless: bool=True,
             wait_s: int=12,
     ) -> None:
         self.url = url
         self.out_dir = out_dir
-        self.n_chapter = n_chapter
+        self.n_chapter = n_chapters
         self.headless = headless
         self.wait_s = wait_s
 

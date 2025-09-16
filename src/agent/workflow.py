@@ -14,6 +14,7 @@ from llama_index.core.llms import ChatMessage
 from typing import Any, List
 from llama_index.core.bridge.pydantic import BaseModel, Field
 from llama_index.core.prompts import PromptTemplate
+from llama_index.core.llms import ChatResponse
 
 import sys
 import os
@@ -68,6 +69,7 @@ class BookSummary(Workflow, TrackApi):
         self.chapter_generator = self.get_chapter(gather_chapters)
         
         # Store initial data
+        self.chapter_count = 0
         self.initial_short_summaries = initial_short_summaries or []
         self.initial_long_summaries = initial_long_summaries or []
         self.initial_characters = initial_characters
@@ -129,7 +131,8 @@ class BookSummary(Workflow, TrackApi):
         except StopIteration:
             chapter_text = None
         
-        if (len(summaries_segment)*self.gather_chapters < self.max_chapters) and chapter_text:
+        if (self.chapter_count*self.gather_chapters < self.max_chapters) and chapter_text:
+            self.chapter_count += 1
             if (summaries_segment == []) and (chapters_summary_list == []):
                 chapter_summary = await self._rate_limited_llm_call(
                     self.llm.astructured_predict,
@@ -163,7 +166,7 @@ class BookSummary(Workflow, TrackApi):
             self.llm.chat,
             [ChatMessage(role="user", content=REWRITE_SUMMARY_PROMPT_TMPL.format(summary=summaries))]
         )
-        return StopEvent(result=rewrite_summary.content)
+        return StopEvent(result=str(rewrite_summary))
         
     async def big_summary(
         self,
@@ -176,12 +179,12 @@ class BookSummary(Workflow, TrackApi):
             self.llm.chat,
             [ChatMessage(role="user", content=LONG_SUMMARY_PROMPT_TMPL.format(characters=characters,summaries=summaries))]
         )
-        return big_summary_response.content
+        return str(big_summary_response)
 
 async def Summary(
     start_chapter = 0,
-    max_chapters = 100,
-    gather_chapters = 10,
+    max_chapters = 10,
+    gather_chapters = 2,
     summary_time_per_chapter = 20,
     big_summary_interval = 50,
     quota_per_minute = 15,
@@ -208,11 +211,10 @@ async def Summary(
         initial_short_summaries=short_summary_list,
         initial_long_summaries=long_summary_list,
         initial_characters=characters,
-    )
-    
-    handler = w.run(
         timeout=max_chapters//gather_chapters*summary_time_per_chapter,
     )
+    
+    handler = w.run()
 
     async for ev in handler.stream_events():
         if isinstance(ev, ProgressSummaryEvent):
@@ -225,12 +227,12 @@ async def Summary(
         os.makedirs(saved_path, exist_ok=True)
         with open(os.path.join(saved_path, name + "_summary.txt"), "w", encoding="utf-8") as f:
             f.write(str(result).strip())  # Convert to string using __str__ method
-        return result
+    return result
 
 if __name__ == "__main__":
     max_chapters = 10
     gather_chapters = 2
-    big_summary_interval = 50
+    big_summary_interval = 4
     quota_per_minute = 15  # Adjust based on your API tier
     summary_time_per_chapter = 20
     name = "Cẩu Tại Sơ Thánh Ma Môn Làm Nhân Tài"
