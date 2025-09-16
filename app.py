@@ -217,7 +217,7 @@ async def generate_summary_async(queue, safe_folder_name, temp_dir, start_chapte
             initial_short_summaries=short_summaries or [],
             initial_long_summaries=long_summaries or [],
             initial_characters=characters,
-            api_key=st.session_state.google_api_key if 'google_api_key' in st.session_state else None
+            # api_key=st.session_state.google_api_key if 'google_api_key' in st.session_state else None
         )
         current_chapter = 0
         handler = w.run(timeout=max_chapters // gather_chapters * summary_time_per_chapter)
