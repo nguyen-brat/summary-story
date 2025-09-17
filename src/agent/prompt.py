@@ -59,15 +59,9 @@ Tóm tắt các chương truyện trước:
 Tóm tắt chính:
 """
 
-REWRITE_SUMMARY_PROMPT_TMPL = """Viết lại tóm tắt dưới đây cho ngắn gọn hơn, súc tích hơn,\
-không lặp từ, không lặp ý, không thêm bớt ý, không thay đổi ý nghĩa.\
-Trả lời ngay vào tóm tắt không trả lời thêm gì khác như ví dụ:
-Tóm tắt:
-Tóm_tắt
-
-Tóm tắt rút gọn:
-Tóm_tắt_rút_gọn
------
+REWRITE_SUMMARY_PROMPT_TMPL = """Viết lại tóm tắt dưới đây thành một đoạn giới thiệu cốt truyện chuyện nghiệp hơn \
+không thêm bớt ý, không thay đổi ý nghĩa tránh lặp từ quá nhiều. \
+Trả lời ngay vào tóm tắt không trả lời thêm gì khác.
 Tóm tắt:
 {summary}
 

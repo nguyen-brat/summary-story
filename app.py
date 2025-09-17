@@ -42,14 +42,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for chat-like UI
+# Custom CSS for chat-like UI with dark mode support
 st.markdown("""
 <style>
     .stApp > header {
         background-color: transparent;
     }
     .main-content {
-        background-color: #f8f9fa;
+        background-color: var(--background-color);
         border-radius: 10px;
         padding: 20px;
         margin: 10px 0;
@@ -59,29 +59,85 @@ st.markdown("""
         margin: 10px 0;
         border-radius: 10px;
         border-left: 4px solid #1f77b4;
-        background-color: white;
+        background-color: var(--background-color);
+        color: var(--text-color);
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        border: 1px solid var(--border-color);
     }
     .user-message {
         border-left-color: #ff7f0e;
-        background-color: #fff3e0;
+        background-color: var(--user-message-bg);
+        color: var(--text-color);
     }
     .system-message {
         border-left-color: #2ca02c;
-        background-color: #f3fff3;
+        background-color: var(--system-message-bg);
+        color: var(--text-color);
     }
     .error-message {
         border-left-color: #d62728;
-        background-color: #fff3f3;
+        background-color: var(--error-message-bg);
+        color: var(--text-color);
     }
     .summary-box {
-        border: 1px solid #e0e0e0;
+        border: 1px solid var(--border-color);
         border-radius: 5px;
         padding: 10px;
-        background-color: #ffffff;
+        background-color: var(--summary-box-bg);
+        color: var(--text-color);
         height: auto;
         overflow-y: hidden;
         word-wrap: break-word;
+    }
+
+    /* Light mode variables */
+    :root {
+        --background-color: #ffffff;
+        --text-color: #000000;
+        --border-color: #e0e0e0;
+        --user-message-bg: #fff3e0;
+        --system-message-bg: #f3fff3;
+        --error-message-bg: #fff3f3;
+        --summary-box-bg: #ffffff;
+    }
+
+    /* Dark mode variables */
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --background-color: #262730;
+            --text-color: #fafafa;
+            --border-color: #464853;
+            --user-message-bg: #3d2914;
+            --system-message-bg: #1a3d1a;
+            --error-message-bg: #3d1a1a;
+            --summary-box-bg: #262730;
+        }
+    }
+
+    /* Force dark mode when Streamlit is in dark theme */
+    [data-theme="dark"] {
+        --background-color: #262730;
+        --text-color: #fafafa;
+        --border-color: #464853;
+        --user-message-bg: #3d2914;
+        --system-message-bg: #1a3d1a;
+        --error-message-bg: #3d1a1a;
+        --summary-box-bg: #262730;
+    }
+
+    /* Ensure text is visible in both modes */
+    .chat-message small {
+        color: var(--text-color);
+        opacity: 0.8;
+    }
+    
+    .summary-box * {
+        color: var(--text-color) !important;
+    }
+
+    /* Handle Streamlit's default text colors */
+    .stMarkdown {
+        color: var(--text-color);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -89,7 +145,7 @@ st.markdown("""
 def display_summary_box(text):
     """Displays text in a custom box that expands to fit content."""
     escaped_text = html.escape(text).replace('\n', '<br>')
-    st.markdown(f'<div class="summary-box">{escaped_text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="summary-box"><span style="color: var(--text-color);">{escaped_text}</span></div>', unsafe_allow_html=True)
 
 # Initialize session state
 def init_session_state():
@@ -192,11 +248,12 @@ def crawler_process(url, username, password, temp_dir, n_chapters, queue):
 
 async def generate_summary_async(queue, safe_folder_name, temp_dir, start_chapter, max_chapters, gather_chapters,
                                big_summary_interval, quota_per_minute, summary_time_per_chapter,
-                               short_summaries=None, long_summaries=None, characters=""):
+                               short_summaries=None, long_summaries=None, characters="", api_key=None):
     """Asynchronously generates summaries and puts them in a queue."""
     try:
-        if 'google_api_key' in st.session_state:
-            os.environ['GOOGLE_API_KEY'] = st.session_state.google_api_key
+        # Set environment variable as backup
+        if api_key:
+            os.environ['GOOGLE_API_KEY'] = api_key
         story_files = []
         for item in os.listdir(temp_dir):
             item_path = os.path.join(temp_dir, item)
@@ -217,10 +274,11 @@ async def generate_summary_async(queue, safe_folder_name, temp_dir, start_chapte
             initial_short_summaries=short_summaries or [],
             initial_long_summaries=long_summaries or [],
             initial_characters=characters,
-            api_key=st.session_state.google_api_key if 'google_api_key' in st.session_state else None
+            api_key=api_key,
+            timeout=max_chapters // gather_chapters * summary_time_per_chapter
         )
         current_chapter = 0
-        handler = w.run(timeout=max_chapters // gather_chapters * summary_time_per_chapter)
+        handler = w.run()
         async for ev in handler.stream_events():
             if isinstance(ev, ProgressSummaryEvent):
                 current_chapter += 1
@@ -302,13 +360,13 @@ def main():
             st.subheader("📋 Crawl Settings")
             col_a, col_b = st.columns(2)
             with col_a:
-                n_chapters = st.number_input("Chapters to Crawl", min_value=1, value=10)
-                max_chapters = st.number_input("Max Chapters to Summarize", min_value=1, value=100)
-                gather_chapters = st.number_input("Gather Chapters", min_value=1, value=10)
+                n_chapters = st.number_input("Chapters to Crawl and Summarize", min_value=1, value=100)
             with col_b:
-                big_summary_interval = st.number_input("Big Summary Interval", min_value=1, value=50)
-                quota_per_minute = st.number_input("Quota Per Minute", min_value=1, value=15)
-            summary_time_per_chapter = st.number_input("Summary Time Per Chapter (s)", min_value=1, value=20)
+                gather_chapters = st.number_input("Gather n Chapters and summary 1 time", min_value=1, value=10)
+            big_summary_interval = gather_chapters*5 
+            max_chapters = n_chapters
+            quota_per_minute = 15
+            summary_time_per_chapter = 60
             crawl_and_summarize = st.form_submit_button("🚀 Crawl & Summarize", type="primary")
 
         st.divider()
@@ -329,7 +387,7 @@ def main():
                 
                 if len(st.session_state.streaming_summaries) > 1:
                     with st.expander(f"📚 View All {len(st.session_state.streaming_summaries)} Processed Chapters"):
-                        for chap in reversed(st.session_state.streaming_summaries):
+                        for chap in st.session_state.streaming_summaries:
                             st.subheader(f"Chapter {chap['chapter']} ({chap['timestamp']}):")
                             display_summary_box(chap['summary'])
         else:
@@ -368,8 +426,9 @@ def main():
                 add_chat_message("system", "🤖 Starting summarization...")
                 st.session_state.summary_queue = tQueue()
                 safe_folder_name = create_safe_folder_name(st.session_state.story_to_summarize)
+                api_key = st.session_state.get('google_api_key', None)
                 args = (st.session_state.summary_queue, safe_folder_name, st.session_state.temp_dir, 0, max_chapters, gather_chapters,
-                        big_summary_interval, quota_per_minute, summary_time_per_chapter)
+                        big_summary_interval, quota_per_minute, summary_time_per_chapter, None, None, "", api_key)
                 st.session_state.summary_thread = threading.Thread(target=run_summary_in_thread, args=args, daemon=True)
                 st.session_state.summary_thread.start()
 

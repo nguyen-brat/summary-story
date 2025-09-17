@@ -3,11 +3,11 @@
 
 echo "🚀 Starting Story Summary AI with UV..."
 echo "📍 Make sure you have set your environment variables in .env file"
-echo "🔧 Using UV to run: streamlit run main.py"
+echo "🔧 Using UV to run: streamlit run app.py"
 echo ""
 
 # Run the streamlit app with uv
-uv run streamlit run main.py
+uv run streamlit run app.py
 
 echo ""
 echo "👋 Story Summary AI has stopped."

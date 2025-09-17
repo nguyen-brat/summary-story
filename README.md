@@ -79,22 +79,36 @@ echo "GOOGLE_API_KEY=your_google_api_key_here" > .env
 
 ## How to Run
 
-### Option 1: Docker (Recommended)
+### Option 1: Docker
 
-The easiest way to run AutoSummary is using Docker:
+Run AutoSummary using Docker:
+
+#### Quick Start with Docker Script
 
 ```bash
-# Initial setup
+# Make the script executable
 chmod +x docker-run.sh
-./docker-run.sh setup
 
-# Run the application
+# Build and start the application
+./docker-run.sh build
 ./docker-run.sh start
 
 # Access at http://localhost:8501
 ```
 
-For detailed Docker instructions, see [DOCKER.md](DOCKER.md).
+#### Manual Docker Commands
+
+```bash
+# Build the Docker image
+docker build -t autosummary .
+
+# Run the container
+docker run -d --name autosummary-app -p 8501:8501 autosummary
+
+# Access at http://localhost:8501
+```
+
+Note: You'll need to configure your API key and credentials through the web interface.
 
 ### Option 2: Local Development
 
@@ -113,7 +127,7 @@ chmod +x run.sh
 Or manually:
 
 ```bash
-uv run streamlit run main.py
+uv run streamlit run app.py
 ```
 
 This will start a web interface at http://localhost:8501 with:
@@ -149,7 +163,7 @@ For convenience, you can also use the provided scripts:
 Run the web interface for easy story crawling and summarization:
 
 ```bash
-uv run streamlit run main.py
+uv run streamlit run app.py
 ```
 
 This will start a web interface at http://localhost:8501 where you can:
@@ -202,6 +216,7 @@ AutoSummary/
 │   ├── crawl.sh            # Convenience script for crawling
 │   └── summarize.sh        # Convenience script for summarization
 ├── story/                  # Directory for crawled stories
+├── app.py                  # Main Streamlit application
 ├── setup.py               # Setup script for environment configuration
 ├── pyproject.toml         # Project dependencies
 ├── uv.lock                # Dependency lock file

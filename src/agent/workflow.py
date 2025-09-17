@@ -169,7 +169,8 @@ class BookSummary(Workflow, TrackApi):
             self.llm.chat,
             [ChatMessage(role="user", content=REWRITE_SUMMARY_PROMPT_TMPL.format(summary=summaries))]
         )
-        return StopEvent(result=str(rewrite_summary))
+        rewrite_summary = self.clean_response(str(rewrite_summary))
+        return StopEvent(result=rewrite_summary)
         
     async def big_summary(
         self,
@@ -183,6 +184,13 @@ class BookSummary(Workflow, TrackApi):
             [ChatMessage(role="user", content=LONG_SUMMARY_PROMPT_TMPL.format(characters=characters,summaries=summaries))]
         )
         return str(big_summary_response)
+    
+    def clean_response(self, text: str) -> str:
+        prefix = "assistant:"
+        # Remove only if it starts with 'assistant:'
+        if text.strip().lower().startswith(prefix):
+            return text.strip()[len(prefix):].lstrip()
+        return text
 
 async def Summary(
     start_chapter = 0,
@@ -214,11 +222,10 @@ async def Summary(
         initial_short_summaries=short_summary_list,
         initial_long_summaries=long_summary_list,
         initial_characters=characters,
-        timeout=max_chapters//gather_chapters*summary_time_per_chapter,
+        timeout=max_chapters // gather_chapters * summary_time_per_chapter,
     )
     
     handler = w.run()
-
     async for ev in handler.stream_events():
         if isinstance(ev, ProgressSummaryEvent):
             print(ev.msg)
@@ -233,9 +240,9 @@ async def Summary(
     return result
 
 if __name__ == "__main__":
-    max_chapters = 10
-    gather_chapters = 2
-    big_summary_interval = 4
+    max_chapters = 100
+    gather_chapters = 10
+    big_summary_interval = 50
     quota_per_minute = 15  # Adjust based on your API tier
     summary_time_per_chapter = 20
     name = "Cẩu Tại Sơ Thánh Ma Môn Làm Nhân Tài"
