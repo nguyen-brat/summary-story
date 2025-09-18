@@ -20,7 +20,7 @@ class bns_crawler:
             self,
             url: str,
             out_dir: str,
-            n_chapters: int=100,
+            n_chapters: int=0,
             headless: bool=True,
             wait_s: int=12,
     ) -> None:
@@ -86,6 +86,13 @@ class bns_crawler:
         full_chapters = self.wait.until(EC.presence_of_element_located((By.ID, "chuong-list-more")))
         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", full_chapters)
         full_chapters.click()
+        try:
+            all_btn = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "li.pager-all a")))
+            self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", all_btn)
+            all_btn.click()
+            self._ready()
+        except Exception:
+            pass
 
         #Trich xuat duong dan cac chuong
         chap_elems = self.wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "#mucluc-list a.chuong-link")))
@@ -103,7 +110,7 @@ class bns_crawler:
 
             chapters.append((i, title, href))
 
-        if len(chapters) > self.n_chapter:    
+        if self.n_chapter != 0 and len(chapters) > self.n_chapter:    
             chapters = chapters[:self.n_chapter]
 
         return chapters
