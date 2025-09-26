@@ -86,6 +86,12 @@ class bns_crawler:
         full_chapters = self.wait.until(EC.presence_of_element_located((By.ID, "chuong-list-more")))
         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", full_chapters)
         full_chapters.click()
+        
+        #click all chapter button
+        all_button = self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, "pager-all")))
+        all_button = all_button.find_element(By.CLASS_NAME, "pager-link")
+        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", all_button)
+        all_button.click()
 
         #Trich xuat duong dan cac chuong
         chap_elems = self.wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "#mucluc-list a.chuong-link")))

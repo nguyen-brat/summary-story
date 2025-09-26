@@ -315,8 +315,8 @@ def main():
             if google_api_key:
                 st.session_state.google_api_key = google_api_key
         with st.expander("🌐 Website Credentials", expanded=True):
-            username = st.text_input("Username", help="Website login username")
-            password = st.text_input("Password", type="password", help="Website login password")
+            username = st.text_input("Enter your Username", help="Bach Ngoc Sach login username", placeholder='Bach Ngoc Sach login username')
+            password = st.text_input("Enter your Password", type="password", help="Bach Ngoc Sach login password", placeholder='Bach Ngoc Sach login password')
         st.divider()
         st.header("📖 Story History")
         if st.session_state.crawl_history:

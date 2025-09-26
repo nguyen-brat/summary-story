@@ -31,7 +31,7 @@ load_dotenv()
 
 class ChapterSummary(BaseModel):
     character: str = Field(description="Danh sách các nhân vật được đề cập. Mỗi dòng liệt kê một nhân vật (Tên_nhân_vât: giới thiệu về nhân vật)")
-    summary: str = Field(description="Tóm tắt nội dung chính của chương truyện dưới 6 câu.")
+    summary: str = Field(description="Tóm tắt ngắn gọn các tình tiết chính của truyện.")
 
 class SummarizeEvent(Event):
     summary: ChapterSummary = Field(description="Tóm tắt các chương truyện trước và danh sách các nhân vật")
@@ -88,7 +88,7 @@ class BookSummary(Workflow, TrackApi):
                         cop = gather_chapters
                         gather_chapters = []
                         print(f"Yielding {len(cop)} chapters with total length: {sum(len(ch) for ch in cop)}")
-                        yield '\n'.join(cop)
+                        yield cop
             except FileNotFoundError:
                 print(f"File not found: {chapter_path}")
             except Exception as e:
@@ -97,7 +97,7 @@ class BookSummary(Workflow, TrackApi):
         # Yield any remaining chapters
         if gather_chapters:
             print(f"Yielding final {len(gather_chapters)} chapters")
-            yield '\n'.join(gather_chapters)
+            yield gather_chapters
 
     @step
     async def summarize_chapter(
@@ -124,36 +124,34 @@ class BookSummary(Workflow, TrackApi):
         chapter_summary = '\n'.join(summary.summary for summary in summaries_segment)
         chapters_summary_list = await ctx.store.get("big_summaries", [])
         chapters_summary = '\n'.join(summary for summary in chapters_summary_list)
-        summaries = chapters_summary + '\n' + chapter_summary
+        summaries = (chapters_summary + '\n' + chapter_summary).strip()
         
         characters = await ctx.store.get("characters", "")
         
         # Get the next chapter from the instance generator
         try:
-            chapter_text = next(self.chapter_generator)
+            gather_chapters = next(self.chapter_generator)
         except StopIteration:
-            chapter_text = None
+            gather_chapters = None
         
-        if (self.chapter_count*self.gather_chapters < self.max_chapters) and chapter_text:
+        if (self.chapter_count*self.gather_chapters < self.max_chapters) and gather_chapters:
             self.chapter_count += 1
             if (summaries_segment == []) and (chapters_summary_list == []):
-                chapter_summary = await self._rate_limited_llm_call(
-                    self.llm.astructured_predict,
-                    ChapterSummary,
-                    PromptTemplate(FIRST_EXTRACTCHARACTERNSUMMARY_PROMPT_TMPL),
-                    chapter_text = chapter_text
+                chapter_summary = await self.short_summary(
+                    ctx=ctx,
+                    prompt_tmpl=FIRST_EXTRACTCHARACTERNSUMMARY_PROMPT_TMPL,
+                    characters=characters,
+                    previous_summary=summaries,
+                    gather_chapters=gather_chapters
                 )
-                ctx.write_event_to_stream(ProgressSummaryEvent(msg=chapter_summary.summary))
             else:
-                chapter_summary = await self._rate_limited_llm_call(
-                    self.llm.astructured_predict,
-                    ChapterSummary,
-                    PromptTemplate(EXTRACT_CHARACTERSNSUMMARY_PROMPT_TMPL),
-                    characters = characters,
-                    previous_summary = summaries,
-                    chapter_text = chapter_text
+                chapter_summary = await self.short_summary(
+                    ctx=ctx,
+                    prompt_tmpl=EXTRACT_CHARACTERSNSUMMARY_PROMPT_TMPL,
+                    characters=characters,
+                    previous_summary=summaries,
+                    gather_chapters=gather_chapters
                 )
-                ctx.write_event_to_stream(ProgressSummaryEvent(msg=chapter_summary.summary))
             summaries_segment.append(chapter_summary)
             await ctx.store.set("chapter_summaries", summaries_segment)
             await ctx.store.set("characters", chapter_summary.character)
@@ -161,7 +159,7 @@ class BookSummary(Workflow, TrackApi):
             if ((len(summaries_segment)*self.gather_chapters) % self.big_summary_interval == 0) and (not isinstance(ev, StartEvent)):
                 long_summary = await self.big_summary(ctx, summaries_segment)
                 await ctx.store.set("big_summaries", chapters_summary_list + [long_summary])
-                await ctx.store.set("chapter_summaries", [])
+                await ctx.store.set("chapter_summaries", summaries_segment[-1:])
             
             return SummarizeEvent(summary=chapter_summary)
         
@@ -185,6 +183,50 @@ class BookSummary(Workflow, TrackApi):
         )
         return str(big_summary_response)
     
+    async def short_summary(
+        self,
+        ctx: Context,
+        prompt_tmpl,
+        characters:str,
+        previous_summary:str,
+        gather_chapters: List[str],
+    ) -> ChapterSummary:
+        try:
+            chapter_summary = await self._rate_limited_llm_call(
+                self.llm.astructured_predict,
+                ChapterSummary,
+                PromptTemplate(prompt_tmpl),
+                characters = characters,
+                previous_summary = previous_summary,
+                chapter_text = '\n'.join(gather_chapters)
+            )
+            ctx.write_event_to_stream(ProgressSummaryEvent(msg=chapter_summary.summary))
+            return chapter_summary
+        except ValueError as e:
+            first_half = '\n'.join(gather_chapters)[:len('\n'.join(gather_chapters))//2]
+            first_half_chapter_summary = await self.short_summary(
+                ctx,
+                prompt_tmpl,
+                characters,
+                previous_summary,
+                [first_half]
+            )
+            ctx.write_event_to_stream(ProgressSummaryEvent(msg=first_half_chapter_summary.summary))
+            second_half = '\n'.join(gather_chapters)[len('\n'.join(gather_chapters))//2:]
+            second_half_chapter_summary = await self.short_summary(
+                ctx,
+                prompt_tmpl,
+                characters,
+                previous_summary + "\n" + first_half_chapter_summary.summary,
+                [second_half]
+            )
+            ctx.write_event_to_stream(ProgressSummaryEvent(msg=second_half_chapter_summary.summary))
+            final_summary = ChapterSummary(
+                character=second_half_chapter_summary.character,
+                summary=first_half_chapter_summary.summary + "\n" + second_half_chapter_summary.summary
+            )
+            return final_summary
+
     def clean_response(self, text: str) -> str:
         prefix = "assistant:"
         # Remove only if it starts with 'assistant:'
@@ -206,6 +248,8 @@ async def Summary(
     long_summary_list = [],
     characters = "",
 ):
+    if saved:
+        os.makedirs(saved_path, exist_ok=True)
     story_paths = [
         os.path.join("story", name, f)
         for f in os.listdir(os.path.join("story", name))
@@ -226,26 +270,28 @@ async def Summary(
     )
     
     handler = w.run()
-    async for ev in handler.stream_events():
-        if isinstance(ev, ProgressSummaryEvent):
-            print(ev.msg)
-            print("-"*40)
+    with open(os.path.join(saved_path, name + "_summary.txt"), "w", encoding="utf-8") as f:
+        async for ev in handler.stream_events():
+            if isinstance(ev, ProgressSummaryEvent):
+                if saved:
+                    f.write(str(ev.msg) + "\n-----------------------\n")
+                print(ev.msg)
+                print("-"*40)
 
     result = await handler
     
     if saved:
-        os.makedirs(saved_path, exist_ok=True)
         with open(os.path.join(saved_path, name + "_summary.txt"), "w", encoding="utf-8") as f:
             f.write(str(result).strip())  # Convert to string using __str__ method
     return result
 
 if __name__ == "__main__":
-    max_chapters = 100
+    max_chapters = 1075
     gather_chapters = 10
-    big_summary_interval = 50
+    big_summary_interval = 100
     quota_per_minute = 15  # Adjust based on your API tier
     summary_time_per_chapter = 20
-    name = "Cẩu Tại Sơ Thánh Ma Môn Làm Nhân Tài"
+    name = "Khủng Bố Sống Lại [C]"
     
 
     result = asyncio.run(
